@@ -22,6 +22,12 @@ struct MetalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MTKView, context: Context) {
-        context.coordinator.level = audio.smoothedLevel
+        let r = context.coordinator
+        r.features = audio.features
+        r.smoothedLevel = audio.smoothedLevel
+        r.smoothedLow = audio.smoothedLow
+        r.smoothedMid = audio.smoothedMid
+        r.smoothedHigh = audio.smoothedHigh
+        r.smoothedBeat = audio.smoothedBeat
     }
 }

@@ -1,3 +1,4 @@
+import Accelerate
 import AVFoundation
 import CoreMedia
 import Foundation
@@ -18,13 +19,9 @@ enum CaptureError: LocalizedError {
     }
 }
 
-/// System-audio capture pipeline filtered to the Music app's bundle id.
-///
-/// SCStream requires a display to be selected even for audio-only capture;
-/// we pick the main display at the minimum resolution and frame rate, then
-/// rely on the `including:` content filter to restrict capture to
-/// `com.apple.Music`. Audio samples are decoded on the SCK delivery queue
-/// (off-actor) and yielded into an `AsyncStream` of `AudioFeatures`.
+/// System-audio capture filtered to Music.app, with the full M2 analysis
+/// pipeline (mono mix → 2048-sample Hann window @ 50% overlap → vDSP FFT
+/// → log binning → bands → onset). Features stream out via `AsyncStream`.
 actor SystemAudioCapture {
     private static let log = Logger(subsystem: "app.auralis", category: "SystemAudioCapture")
     static let musicBundleID = "com.apple.Music"
@@ -58,7 +55,6 @@ actor SystemAudioCapture {
         }) else {
             throw CaptureError.musicNotRunning
         }
-
         guard let display = content.displays.first else {
             throw CaptureError.noDisplay
         }
@@ -74,7 +70,6 @@ actor SystemAudioCapture {
         config.excludesCurrentProcessAudio = true
         config.sampleRate = 48_000
         config.channelCount = 2
-        // Audio-only capture: keep video work near zero.
         config.width = 2
         config.height = 2
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
@@ -83,12 +78,15 @@ actor SystemAudioCapture {
 
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         let cont = self.continuation
-        let output = AudioStreamOutput { buffer in
-            let level = AudioMath.rms(buffer: buffer)
-            cont.yield(AudioFeatures(level: level, timestamp: CACurrentMediaTime()))
+        let output = AudioStreamOutput(
+            sampleRate: Float(config.sampleRate),
+            channels: Int(config.channelCount)
+        ) { features in
+            cont.yield(features)
         }
 
-        let queue = DispatchQueue(label: "app.auralis.audio.delivery", qos: .userInteractive)
+        let queue = DispatchQueue(label: "app.auralis.audio.delivery",
+                                  qos: .userInteractive)
         try stream.addStreamOutput(output, type: .audio, sampleHandlerQueue: queue)
 
         try await stream.startCapture()
@@ -107,22 +105,142 @@ actor SystemAudioCapture {
     }
 }
 
-/// Bridges SCStream's `SCStreamOutput` callback (delivered on an arbitrary
-/// queue) into a `@Sendable` closure. The handler runs on the SCK delivery
-/// queue and must not block longer than the buffer cadence.
+/// Bridges `SCStreamOutput` callbacks into the analysis pipeline.
+/// Owns the ring buffer, FFT, band aggregator, and onset detector; all
+/// accessed exclusively from the SCK serial delivery queue.
 final class AudioStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
-    private let onAudio: @Sendable (CMSampleBuffer) -> Void
+    private let onFeatures: @Sendable (AudioFeatures) -> Void
+    private let sampleRate: Float
+    private let channels: Int
+    private let windowSize = 2048
+    private let hop = 1024
 
-    init(onAudio: @escaping @Sendable (CMSampleBuffer) -> Void) {
-        self.onAudio = onAudio
+    private let fft: FFTAnalyzer
+    private let logBinner: LogBinner
+    private let bands: BandComputer
+    private let onsets = OnsetDetector()
+
+    private var ring: [Float]
+    private var writeIndex = 0
+    private var samplesSinceHop = 0
+    private var hasFilled = false
+    private var monoScratch: [Float] = []
+
+    init(sampleRate: Float,
+         channels: Int,
+         onFeatures: @escaping @Sendable (AudioFeatures) -> Void) {
+        self.sampleRate = sampleRate
+        self.channels = channels
+        self.onFeatures = onFeatures
+        self.fft = FFTAnalyzer(windowSize: windowSize)
+        self.logBinner = LogBinner(fftSize: windowSize, sampleRate: sampleRate)
+        self.bands = BandComputer(sampleRate: sampleRate, fftSize: windowSize)
+        self.ring = [Float](repeating: 0, count: windowSize)
         super.init()
     }
 
     func stream(_ stream: SCStream,
                 didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
-        guard type == .audio,
-              CMSampleBufferDataIsReady(sampleBuffer) else { return }
-        onAudio(sampleBuffer)
+        guard type == .audio, CMSampleBufferDataIsReady(sampleBuffer) else { return }
+        let time = CACurrentMediaTime()
+        AudioMath.withSamples(of: sampleBuffer) { abl, frames in
+            guard frames > 0 else { return }
+            mixMonoAndIngest(abl: abl, frames: frames, at: time)
+        }
+    }
+
+    private func mixMonoAndIngest(abl: UnsafeMutableAudioBufferListPointer,
+                                  frames: Int,
+                                  at time: TimeInterval) {
+        if monoScratch.count < frames {
+            monoScratch = [Float](repeating: 0, count: frames)
+        }
+        monoScratch.withUnsafeMutableBufferPointer { dst in
+            let base = dst.baseAddress!
+            if abl.count == 1, let p = abl[0].mData?.assumingMemoryBound(to: Float.self) {
+                memcpy(base, p, frames * MemoryLayout<Float>.size)
+            } else if abl.count >= 2,
+                      let l = abl[0].mData?.assumingMemoryBound(to: Float.self),
+                      let r = abl[1].mData?.assumingMemoryBound(to: Float.self) {
+                vDSP_vadd(l, 1, r, 1, base, 1, vDSP_Length(frames))
+                var half: Float = 0.5
+                vDSP_vsmul(base, 1, &half, base, 1, vDSP_Length(frames))
+            }
+        }
+
+        monoScratch.withUnsafeBufferPointer { src in
+            push(samples: src.baseAddress!, count: frames)
+        }
+
+        // Each completed hop triggers a feature emit using the current ring contents.
+        while samplesSinceHop >= hop {
+            samplesSinceHop -= hop
+            emitWindow(at: time)
+        }
+    }
+
+    private func push(samples: UnsafePointer<Float>, count: Int) {
+        var remaining = count
+        var srcOffset = 0
+        ring.withUnsafeMutableBufferPointer { dst in
+            let base = dst.baseAddress!
+            while remaining > 0 {
+                let chunk = min(remaining, windowSize - writeIndex)
+                memcpy(base + writeIndex,
+                       samples + srcOffset,
+                       chunk * MemoryLayout<Float>.size)
+                writeIndex = (writeIndex + chunk) % windowSize
+                srcOffset += chunk
+                remaining -= chunk
+                samplesSinceHop += chunk
+            }
+        }
+        if !hasFilled, samplesSinceHop >= windowSize {
+            hasFilled = true
+        }
+    }
+
+    private func emitWindow(at time: TimeInterval) {
+        // Linearize the ring starting at the oldest sample (== writeIndex).
+        var window = [Float](repeating: 0, count: windowSize)
+        ring.withUnsafeBufferPointer { src in
+            window.withUnsafeMutableBufferPointer { dst in
+                let srcBase = src.baseAddress!
+                let dstBase = dst.baseAddress!
+                let head = windowSize - writeIndex
+                memcpy(dstBase, srcBase + writeIndex, head * MemoryLayout<Float>.size)
+                if writeIndex > 0 {
+                    memcpy(dstBase + head, srcBase, writeIndex * MemoryLayout<Float>.size)
+                }
+            }
+        }
+
+        let rms = window.withUnsafeBufferPointer { p in
+            AudioMath.rms(p.baseAddress!, count: windowSize)
+        }
+        let magnitudes = fft.analyze(window: window)
+        let (low, mid, high) = magnitudes.withUnsafeBufferPointer { p in
+            bands.compute(magnitudes: p.baseAddress!, count: magnitudes.count)
+        }
+        let loudness = bands.aWeightedLoudness(low: low, mid: mid, high: high)
+        let logMags = magnitudes.withUnsafeBufferPointer { p in
+            logBinner.bin(magnitudes: p.baseAddress!, count: magnitudes.count)
+        }
+        let onset = onsets.process(magnitudes: logMags, at: time)
+
+        let features = AudioFeatures(
+            level: rms,
+            loudness: loudness,
+            lowBand: low,
+            midBand: mid,
+            highBand: high,
+            magnitudes: logMags,
+            beat: onset.envelope,
+            didBeat: onset.fired,
+            bpm: onsets.bpm,
+            timestamp: time
+        )
+        onFeatures(features)
     }
 }

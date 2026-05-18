@@ -12,6 +12,19 @@ struct ContentView: View {
                 .padding(.top, 28)
                 .padding(.leading, 28)
 
+            if audio.showDebugHUD {
+                VStack {
+                    Spacer().frame(height: 28)
+                    HStack {
+                        Spacer()
+                        DebugHUD()
+                            .transition(AnyTransition.opacity.combined(with: AnyTransition.scale(scale: 0.97)))
+                            .padding(.trailing, 28)
+                    }
+                    Spacer()
+                }
+            }
+
             VStack {
                 Spacer()
                 bottomMeter
@@ -19,6 +32,7 @@ struct ContentView: View {
                     .padding(.bottom, 28)
             }
         }
+        .animation(.easeInOut(duration: 0.18), value: audio.showDebugHUD)
     }
 
     @ViewBuilder
@@ -30,8 +44,8 @@ struct ContentView: View {
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
                     .shadow(color: statusColor.opacity(0.6), radius: 4)
-                Text("Auralis · Milestone 1")
-                    .font(.system(size: 12, weight: .medium, design: .default))
+                Text("Auralis · Milestone 2")
+                    .font(.system(size: 12, weight: .medium))
                     .tracking(0.6)
                     .foregroundStyle(.white.opacity(0.78))
             }
@@ -52,13 +66,11 @@ struct ContentView: View {
     private var bottomMeter: some View {
         HStack(spacing: 16) {
             Text("LEVEL")
-                .font(.system(size: 10, weight: .semibold, design: .default))
+                .font(.system(size: 10, weight: .semibold))
                 .tracking(2.0)
                 .foregroundStyle(.white.opacity(0.55))
-
             AudioLevelBar(level: audio.smoothedLevel)
                 .frame(height: 6)
-
             Text(String(format: "%.2f", audio.smoothedLevel))
                 .font(.system(size: 11, weight: .regular, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.55))
@@ -70,13 +82,11 @@ struct ContentView: View {
 
 private struct AudioLevelBar: View {
     let level: Float
-
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(Color.white.opacity(0.08))
-
                 Capsule(style: .continuous)
                     .fill(LinearGradient(
                         colors: [Color(red: 0.40, green: 0.78, blue: 1.00),
@@ -89,7 +99,6 @@ private struct AudioLevelBar: View {
             }
         }
     }
-
     private var clamped: CGFloat {
         CGFloat(min(1, max(0, level * 6)))
     }

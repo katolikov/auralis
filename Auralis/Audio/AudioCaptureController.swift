@@ -3,22 +3,28 @@ import Combine
 import CoreGraphics
 import Foundation
 
-/// MainActor-facing facade around `SystemAudioCapture`.
-///
-/// Owns permission flow, runs the consumer task, and republishes audio
-/// features to SwiftUI. Smoothed level is what the UI/shader should bind
-/// to; raw level is kept for debug/HUD readouts.
 @MainActor
 final class AudioCaptureController: ObservableObject {
-    @Published private(set) var rawLevel: Float = 0
+    @Published private(set) var features: AudioFeatures = .silent
+
     @Published private(set) var smoothedLevel: Float = 0
+    @Published private(set) var smoothedLoudness: Float = 0
+    @Published private(set) var smoothedLow: Float = 0
+    @Published private(set) var smoothedMid: Float = 0
+    @Published private(set) var smoothedHigh: Float = 0
+    @Published private(set) var smoothedBeat: Float = 0
+    @Published private(set) var bpm: Float = 0
+
     @Published private(set) var isRunning = false
     @Published private(set) var statusMessage: String?
 
+    @Published var showDebugHUD = false
+
     private let capture = SystemAudioCapture()
     private var consumeTask: Task<Void, Never>?
-    private let smoothingAttack: Float = 0.45
-    private let smoothingRelease: Float = 0.08
+
+    private let attack: Float = 0.45
+    private let release: Float = 0.10
 
     func start() async {
         guard !isRunning else { return }
@@ -30,10 +36,9 @@ final class AudioCaptureController: ObservableObject {
         }
 
         consumeTask?.cancel()
-        consumeTask = Task { [weak self, capture] in
+        consumeTask = Task { @MainActor [weak self, capture] in
             for await features in capture.featureStream {
-                guard let self else { return }
-                await self.ingest(features)
+                self?.ingest(features)
             }
         }
 
@@ -43,7 +48,7 @@ final class AudioCaptureController: ObservableObject {
             statusMessage = nil
         } catch {
             isRunning = false
-            statusMessage = (error as? LocalizedError)?.errorDescription
+            statusMessage = (error as? any LocalizedError)?.errorDescription
                 ?? "Capture error: \(error.localizedDescription)"
             consumeTask?.cancel()
             consumeTask = nil
@@ -57,10 +62,29 @@ final class AudioCaptureController: ObservableObject {
         isRunning = false
     }
 
-    private func ingest(_ features: AudioFeatures) {
-        rawLevel = features.level
-        let target = features.level
-        let coef = target > smoothedLevel ? smoothingAttack : smoothingRelease
-        smoothedLevel += coef * (target - smoothedLevel)
+    func toggleDebugHUD() {
+        showDebugHUD.toggle()
+    }
+
+    private func ingest(_ f: AudioFeatures) {
+        features = f
+        smoothedLevel = smooth(target: f.level, current: smoothedLevel)
+        smoothedLoudness = smooth(target: f.loudness, current: smoothedLoudness)
+        smoothedLow = smooth(target: f.lowBand, current: smoothedLow)
+        smoothedMid = smooth(target: f.midBand, current: smoothedMid)
+        smoothedHigh = smooth(target: f.highBand, current: smoothedHigh)
+        smoothedBeat = smooth(target: f.beat,
+                              current: smoothedBeat,
+                              attackOverride: 0.9)
+        bpm = f.bpm
+    }
+
+    private func smooth(target: Float,
+                        current: Float,
+                        attackOverride: Float? = nil) -> Float {
+        let coef = target > current
+            ? (attackOverride ?? attack)
+            : release
+        return current + coef * (target - current)
     }
 }

@@ -17,6 +17,12 @@ struct AuralisApp: App {
         .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandMenu("View") {
+                Button("Toggle Debug HUD") {
+                    audio.toggleDebugHUD()
+                }
+                .keyboardShortcut("d", modifiers: .command)
+            }
         }
     }
 }
