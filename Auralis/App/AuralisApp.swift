@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -7,6 +8,7 @@ struct AuralisApp: App {
     @StateObject private var musicKit = MusicAppObserver()
     @StateObject private var artwork = ArtworkLoader()
     @StateObject private var theme = Theme()
+    @StateObject private var menuBar = MenuBarController()
 
     var body: some Scene {
         WindowGroup("Auralis") {
@@ -19,6 +21,7 @@ struct AuralisApp: App {
                 .frame(minWidth: 720, minHeight: 480)
                 .background(Color.black)
                 .task {
+                    menuBar.install(musicKit: musicKit, appState: appState)
                     await audio.start()
                     await musicKit.start()
                 }
@@ -28,12 +31,23 @@ struct AuralisApp: App {
                 .onChange(of: artwork.palette) { _, palette in
                     theme.update(from: palette)
                 }
+                .sheet(isPresented: $appState.isOnboardingActive,
+                       onDismiss: { appState.dismissOnboarding() }) {
+                    OnboardingSheet(isPresented: $appState.isOnboardingActive)
+                        .environmentObject(theme)
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(after: .windowArrangement) {
+                Button("Enter Full Screen") {
+                    NSApp.keyWindow?.toggleFullScreen(nil)
+                }
+                .keyboardShortcut("f", modifiers: [.control, .command])
+            }
             CommandMenu("Visualizer") {
                 ForEach(VisualizerID.allCases) { mode in
                     Button(mode.displayName) {

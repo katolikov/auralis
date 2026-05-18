@@ -5,6 +5,18 @@ final class AppState: ObservableObject {
     @Published var activeMode: VisualizerID = .aurora
     @Published var isOnboardingActive: Bool = false
 
+    private let onboardingKey = "auralis.onboardingComplete.v1"
+
+    init() {
+        let completed = UserDefaults.standard.bool(forKey: onboardingKey)
+        isOnboardingActive = !completed
+    }
+
+    func dismissOnboarding() {
+        isOnboardingActive = false
+        UserDefaults.standard.set(true, forKey: onboardingKey)
+    }
+
     func cycleMode(reverse: Bool = false) {
         let modes = VisualizerID.allCases
         guard let idx = modes.firstIndex(of: activeMode) else { return }

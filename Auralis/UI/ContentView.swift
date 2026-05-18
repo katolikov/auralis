@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -96,6 +97,9 @@ struct ContentView: View {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             cursorActive = false
+            if NSApp.keyWindow?.styleMask.contains(.fullScreen) == true {
+                NSCursor.setHiddenUntilMouseMoves(true)
+            }
         }
     }
 
