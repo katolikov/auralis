@@ -23,6 +23,17 @@ struct ContentView: View {
                     .padding(.leading, 28)
                     .opacity(cursorActive ? 1 : 0.35)
 
+                VStack {
+                    HStack {
+                        Spacer()
+                        ModeSwitcher(active: $appState.activeMode)
+                            .opacity(cursorActive ? 1 : 0.0)
+                            .padding(.top, 22)
+                            .padding(.trailing, 28)
+                    }
+                    Spacer()
+                }
+
                 if audio.showDebugHUD {
                     VStack {
                         Spacer().frame(height: 28)

@@ -59,7 +59,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     private func registerModes(format: MTLPixelFormat) throws {
-        modes[.aurora] = try AuroraVisualizer(device: device, format: format)
+        modes[.aurora]   = try AuroraVisualizer(device: device, format: format)
+        modes[.bloom]    = try BloomVisualizer(device: device, format: format)
+        modes[.lattice]  = try LatticeVisualizer(device: device, format: format)
+        modes[.filament] = try FilamentVisualizer(device: device, format: format)
+        modes[.halo]     = try HaloVisualizer(device: device, format: format)
     }
 
     nonisolated func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
