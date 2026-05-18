@@ -4,6 +4,7 @@ import SwiftUI
 struct MetalView: NSViewRepresentable {
     @EnvironmentObject var audio: AudioCaptureController
     @EnvironmentObject var theme: Theme
+    @Binding var activeMode: VisualizerID
 
     func makeCoordinator() -> Renderer { Renderer() }
 
@@ -25,11 +26,15 @@ struct MetalView: NSViewRepresentable {
     func updateNSView(_ nsView: MTKView, context: Context) {
         let r = context.coordinator
         r.features = audio.features
-        r.smoothedLevel = audio.smoothedLevel
-        r.smoothedLow = audio.smoothedLow
-        r.smoothedMid = audio.smoothedMid
-        r.smoothedHigh = audio.smoothedHigh
-        r.smoothedBeat = audio.smoothedBeat
+        r.smoothed = SmoothedFeatures(
+            level: audio.smoothedLevel,
+            loudness: audio.smoothedLoudness,
+            low: audio.smoothedLow,
+            mid: audio.smoothedMid,
+            high: audio.smoothedHigh,
+            beat: audio.smoothedBeat
+        )
         r.palette = theme.snapshot
+        r.activeMode = activeMode
     }
 }

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject var appState: AppState
     @EnvironmentObject var audio: AudioCaptureController
     @EnvironmentObject var musicKit: MusicAppObserver
     @EnvironmentObject var artwork: ArtworkLoader
@@ -14,7 +15,7 @@ struct ContentView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                MetalView()
+                MetalView(activeMode: $appState.activeMode)
                     .ignoresSafeArea()
 
                 statusOverlay
@@ -96,7 +97,7 @@ struct ContentView: View {
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
                     .shadow(color: statusColor.opacity(0.6), radius: 4)
-                Text("Auralis · Milestone 3")
+                Text("Auralis · \(appState.activeMode.displayName)")
                     .font(.system(size: 12, weight: .medium))
                     .tracking(0.6)
                     .foregroundStyle(.white.opacity(0.78))

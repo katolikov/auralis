@@ -24,18 +24,16 @@ struct PaletteUniforms {
 @MainActor
 final class Renderer: NSObject, MTKViewDelegate {
     var features: AudioFeatures = .silent
-    var smoothedLevel: Float = 0
-    var smoothedLow: Float = 0
-    var smoothedMid: Float = 0
-    var smoothedHigh: Float = 0
-    var smoothedBeat: Float = 0
+    var smoothed: SmoothedFeatures = SmoothedFeatures(
+        level: 0, loudness: 0, low: 0, mid: 0, high: 0, beat: 0
+    )
     var palette: Theme.Snapshot = Theme.defaultSnapshot
+    var activeMode: VisualizerID = .aurora
 
     private var device: (any MTLDevice)!
     private var commandQueue: (any MTLCommandQueue)!
-    private var pipeline: (any MTLRenderPipelineState)!
     private var magnitudesBuffer: (any MTLBuffer)?
-    private let magnitudesCapacity = AudioFeatures.binCount
+    private var modes: [VisualizerID: any VisualizerMode] = [:]
 
     private let startTime: CFTimeInterval = CACurrentMediaTime()
     private var viewportAspect: Float = 16.0 / 10.0
@@ -47,27 +45,21 @@ final class Renderer: NSObject, MTKViewDelegate {
         view.device = device
         self.device = device
         self.commandQueue = device.makeCommandQueue()
-        buildPipeline(for: view.colorPixelFormat)
 
-        let stride = MemoryLayout<Float>.stride * magnitudesCapacity
-        magnitudesBuffer = device.makeBuffer(length: stride, options: .storageModeShared)
-        magnitudesBuffer?.label = "Audio magnitudes"
+        let stride = MemoryLayout<Float>.stride * AudioFeatures.binCount
+        let buffer = device.makeBuffer(length: stride, options: .storageModeShared)
+        buffer?.label = "Magnitudes"
+        self.magnitudesBuffer = buffer
+
+        do {
+            try registerModes(format: view.colorPixelFormat)
+        } catch {
+            fatalError("Failed to build visualizer modes: \(error)")
+        }
     }
 
-    private func buildPipeline(for format: MTLPixelFormat) {
-        guard let library = device.makeDefaultLibrary() else {
-            fatalError("Could not load default Metal library.")
-        }
-        let desc = MTLRenderPipelineDescriptor()
-        desc.label = "Background"
-        desc.vertexFunction = library.makeFunction(name: "background_vertex")
-        desc.fragmentFunction = library.makeFunction(name: "background_fragment")
-        desc.colorAttachments[0].pixelFormat = format
-        do {
-            pipeline = try device.makeRenderPipelineState(descriptor: desc)
-        } catch {
-            fatalError("Pipeline failure: \(error)")
-        }
+    private func registerModes(format: MTLPixelFormat) throws {
+        modes[.aurora] = try AuroraVisualizer(device: device, format: format)
     }
 
     nonisolated func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -87,48 +79,42 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let drawable = view.currentDrawable,
               let descriptor = view.currentRenderPassDescriptor,
               let command = commandQueue.makeCommandBuffer(),
-              let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+              let magnitudesBuffer else { return }
 
-        if let buffer = magnitudesBuffer {
-            let count = min(features.magnitudes.count, magnitudesCapacity)
-            features.magnitudes.withUnsafeBufferPointer { src in
-                _ = memcpy(buffer.contents(),
-                           src.baseAddress!,
-                           count * MemoryLayout<Float>.stride)
-            }
+        // Upload magnitudes buffer for the frame.
+        let count = min(features.magnitudes.count, AudioFeatures.binCount)
+        features.magnitudes.withUnsafeBufferPointer { src in
+            _ = memcpy(magnitudesBuffer.contents(),
+                       src.baseAddress!,
+                       count * MemoryLayout<Float>.stride)
         }
 
-        var uniforms = BackgroundUniforms(
+        descriptor.colorAttachments[0].loadAction = .clear
+        descriptor.colorAttachments[0].storeAction = .store
+        let bg = palette.background
+        descriptor.colorAttachments[0].clearColor = MTLClearColor(
+            red: Double(bg.x),
+            green: Double(bg.y),
+            blue: Double(bg.z),
+            alpha: 1
+        )
+
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else { return }
+        encoder.label = "Auralis"
+
+        let frame = VisualizerFrame(
             time: Float(CACurrentMediaTime() - startTime),
-            level: smoothedLevel,
             aspect: viewportAspect,
-            beat: smoothedBeat,
-            lowBand: smoothedLow,
-            midBand: smoothedMid,
-            highBand: smoothedHigh,
-            bpm: features.bpm
+            features: features,
+            smoothed: smoothed,
+            palette: palette,
+            magnitudesBuffer: magnitudesBuffer
         )
 
-        var paletteUniforms = PaletteUniforms(
-            primary: SIMD4<Float>(palette.primary, 1),
-            secondary: SIMD4<Float>(palette.secondary, 1),
-            accent: SIMD4<Float>(palette.accent, 1),
-            background: SIMD4<Float>(palette.background, 1)
-        )
+        let mode = modes[activeMode] ?? modes[.aurora]
+        mode?.encode(into: encoder, frame: frame)
 
-        encoder.label = "Background pass"
-        encoder.setRenderPipelineState(pipeline)
-        encoder.setVertexBytes(&uniforms, length: MemoryLayout<BackgroundUniforms>.stride, index: 0)
-        encoder.setFragmentBytes(&uniforms, length: MemoryLayout<BackgroundUniforms>.stride, index: 0)
-        if let buffer = magnitudesBuffer {
-            encoder.setFragmentBuffer(buffer, offset: 0, index: 1)
-        }
-        encoder.setFragmentBytes(&paletteUniforms,
-                                  length: MemoryLayout<PaletteUniforms>.stride,
-                                  index: 2)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
-
         command.present(drawable)
         command.commit()
     }
