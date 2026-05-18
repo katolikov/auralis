@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MetalView: NSViewRepresentable {
     @EnvironmentObject var audio: AudioCaptureController
+    @EnvironmentObject var theme: Theme
 
     func makeCoordinator() -> Renderer { Renderer() }
 
@@ -29,5 +30,6 @@ struct MetalView: NSViewRepresentable {
         r.smoothedMid = audio.smoothedMid
         r.smoothedHigh = audio.smoothedHigh
         r.smoothedBeat = audio.smoothedBeat
+        r.palette = theme.snapshot
     }
 }

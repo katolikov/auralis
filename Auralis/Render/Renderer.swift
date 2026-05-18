@@ -14,6 +14,13 @@ struct BackgroundUniforms {
     var bpm: Float
 }
 
+struct PaletteUniforms {
+    var primary: SIMD4<Float>
+    var secondary: SIMD4<Float>
+    var accent: SIMD4<Float>
+    var background: SIMD4<Float>
+}
+
 @MainActor
 final class Renderer: NSObject, MTKViewDelegate {
     var features: AudioFeatures = .silent
@@ -22,6 +29,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     var smoothedMid: Float = 0
     var smoothedHigh: Float = 0
     var smoothedBeat: Float = 0
+    var palette: Theme.Snapshot = Theme.defaultSnapshot
 
     private var device: (any MTLDevice)!
     private var commandQueue: (any MTLCommandQueue)!
@@ -101,6 +109,13 @@ final class Renderer: NSObject, MTKViewDelegate {
             bpm: features.bpm
         )
 
+        var paletteUniforms = PaletteUniforms(
+            primary: SIMD4<Float>(palette.primary, 1),
+            secondary: SIMD4<Float>(palette.secondary, 1),
+            accent: SIMD4<Float>(palette.accent, 1),
+            background: SIMD4<Float>(palette.background, 1)
+        )
+
         encoder.label = "Background pass"
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<BackgroundUniforms>.stride, index: 0)
@@ -108,6 +123,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         if let buffer = magnitudesBuffer {
             encoder.setFragmentBuffer(buffer, offset: 0, index: 1)
         }
+        encoder.setFragmentBytes(&paletteUniforms,
+                                  length: MemoryLayout<PaletteUniforms>.stride,
+                                  index: 2)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         encoder.endEncoding()
 
