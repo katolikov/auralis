@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct AuralisApp: App {
     init() {
+        if IconRenderer.handleCommandLineIfNeeded() { /* exits */ }
         if PreviewRenderer.handleCommandLineIfNeeded() { /* exits */ }
     }
 

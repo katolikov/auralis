@@ -29,10 +29,20 @@ final class AudioCaptureController: ObservableObject {
     func start() async {
         guard !isRunning else { return }
 
-        guard CGPreflightScreenCaptureAccess() else {
-            _ = CGRequestScreenCaptureAccess()
-            statusMessage = "Grant Screen Recording in System Settings, then relaunch Auralis."
-            return
+        // Poll for Screen Recording permission. The first miss triggers
+        // CGRequestScreenCaptureAccess (which registers the app in TCC
+        // and pops System Settings), then we wait until the grant lands
+        // and continue automatically — no relaunch required.
+        var requested = false
+        while !CGPreflightScreenCaptureAccess() {
+            if Task.isCancelled { return }
+            if !requested {
+                _ = CGRequestScreenCaptureAccess()
+                requested = true
+            }
+            statusMessage =
+                "Grant Screen Recording in System Settings — Auralis starts the moment it's enabled."
+            try? await Task.sleep(for: .seconds(2))
         }
 
         consumeTask?.cancel()
