@@ -3,6 +3,10 @@ import SwiftUI
 
 @main
 struct AuralisApp: App {
+    init() {
+        if PreviewRenderer.handleCommandLineIfNeeded() { /* exits */ }
+    }
+
     @StateObject private var appState = AppState()
     @StateObject private var audio = AudioCaptureController()
     @StateObject private var musicKit = MusicAppObserver()

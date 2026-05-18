@@ -65,3 +65,17 @@ protocol VisualizerMode: AnyObject {
 extension VisualizerMode {
     var id: VisualizerID { Self.id }
 }
+
+extension VisualizerID {
+    @MainActor
+    func build(device: any MTLDevice,
+               format: MTLPixelFormat) throws -> any VisualizerMode {
+        switch self {
+        case .aurora:   return try AuroraVisualizer(device: device, format: format)
+        case .bloom:    return try BloomVisualizer(device: device, format: format)
+        case .lattice:  return try LatticeVisualizer(device: device, format: format)
+        case .filament: return try FilamentVisualizer(device: device, format: format)
+        case .halo:     return try HaloVisualizer(device: device, format: format)
+        }
+    }
+}

@@ -36,22 +36,22 @@ fragment float4 halo_fragment(FSVertexOut in [[stage_in]],
     float2 p = (uv - 0.5);
     p.x *= u.aspect;
 
-    // Soft gradient wash: vertical primary->secondary, slight low-band warmth at bottom.
+    // Soft gradient wash: vertical primary->secondary with palette-tinted bottom warmth.
     float3 base = palette.background.rgb;
-    base = mix(base + palette.secondary.rgb * 0.05,
-               base + palette.primary.rgb * 0.07,
+    base = mix(base + palette.secondary.rgb * 0.08,
+               base + palette.primary.rgb * 0.10,
                smoothstep(0.0, 1.0, uv.y));
-    base += palette.secondary.rgb * 0.06 * pow(1.0 - uv.y, 3.0) * (0.5 + u.lowBand * 3.5);
+    base += palette.secondary.rgb * 0.10 * pow(1.0 - uv.y, 3.0) * (0.6 + u.lowBand * 2.5);
 
     // Editorial torus: superellipse-warped circle.
     float angle = atan2(p.y, p.x);
     float warp =
         0.018 * sin(angle * 4.0 + u.time * 0.30) * (0.4 + u.midBand * 2.5)
-        + 0.012 * sin(angle * 7.0 - u.time * 0.21);
-    float radius = 0.30 + u.loudness * 0.10 + u.beat * 0.05 + warp;
+        + 0.010 * sin(angle * 7.0 - u.time * 0.21);
+    float radius = 0.30 + u.loudness * 0.10 + u.beat * 0.04 + warp;
 
     float r = length(p);
-    float thickness = 0.022 + u.loudness * 0.018;
+    float thickness = 0.014 + u.loudness * 0.014;
     float ring = smoothstep(thickness, 0.0, abs(r - radius));
 
     // Soft inner glow.
@@ -62,23 +62,23 @@ fragment float4 halo_fragment(FSVertexOut in [[stage_in]],
     float outer = smoothstep(radius + 0.20, radius + 0.02, r) *
                   smoothstep(radius + 0.02, radius + 0.20, r);
 
-    float3 ringCol = mix(palette.accent.rgb, palette.primary.rgb, 0.4);
+    float3 ringCol = mix(palette.accent.rgb, palette.primary.rgb, 0.35);
     float3 innerCol = palette.primary.rgb;
     float3 outerCol = palette.secondary.rgb;
 
     float3 col = base;
-    col += inner * innerCol * 0.30;
-    col += outer * outerCol * 0.10;
-    col += ring * ringCol * 1.55;
+    col += inner * innerCol * 0.18;
+    col += outer * outerCol * 0.06;
+    col += ring * ringCol * 0.85;
 
     // Beat shimmer: very fine sparkles inside the ring.
     float sparkleField = step(0.997,
         hash21(floor(uv * 480.0) + floor(u.time * 9.0)));
-    float sparkle = sparkleField * u.highBand * inner * 1.4;
+    float sparkle = sparkleField * u.highBand * inner * 1.1;
     col += sparkle * palette.accent.rgb;
 
     // Vignette
-    col *= 1.0 - smoothstep(0.55, 1.0, r) * 0.45;
+    col *= 1.0 - smoothstep(0.55, 1.0, r) * 0.40;
 
     float n = hash21(uv * 1024.0 + u.time);
     col += (n - 0.5) * (1.0 / 255.0);
