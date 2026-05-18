@@ -45,9 +45,13 @@ actor SystemAudioCapture {
     }
 
     func start() async throws {
+        // `onScreenWindowsOnly: false` lets us see Music.app even when it
+        // has no visible window (mini-player tucked into the menu bar /
+        // running but minimized). Without this we get spurious
+        // .musicNotRunning while audio is plainly playing.
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,
-            onScreenWindowsOnly: true
+            onScreenWindowsOnly: false
         )
 
         guard let musicApp = content.applications.first(where: {

@@ -19,10 +19,21 @@ struct ContentView: View {
                 MetalView(activeMode: $appState.activeMode)
                     .ignoresSafeArea()
 
-                statusOverlay
-                    .padding(.top, 28)
-                    .padding(.leading, 28)
-                    .opacity(cursorActive ? 1 : 0.35)
+                Group {
+                    if audio.actionRequired != nil {
+                        Button {
+                            audio.performAction()
+                        } label: {
+                            statusOverlay
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        statusOverlay
+                    }
+                }
+                .padding(.top, 28)
+                .padding(.leading, 28)
+                .opacity(cursorActive ? 1 : 0.35)
 
                 VStack {
                     HStack {
