@@ -31,8 +31,8 @@ final class AuroraVisualizer: VisualizerMode {
     private let indexCount: Int
 
     private let cols = 96
-    private let rows = 28
-    private let ribbonCount = 3
+    private let rows = 32
+    private let ribbonCount = 4
 
     init(device: any MTLDevice, format: MTLPixelFormat) throws {
         self.device = device
@@ -142,8 +142,8 @@ final class AuroraVisualizer: VisualizerMode {
     }
 
     private static func makeRibbonMesh(cols: Int, rows: Int) -> ([AuroraVertex], [UInt32]) {
-        let width: Float = 5.2
-        let depth: Float = 0.9
+        let width: Float = 5.6
+        let depth: Float = 1.65
         var verts: [AuroraVertex] = []
         verts.reserveCapacity((cols + 1) * (rows + 1))
         for y in 0...rows {

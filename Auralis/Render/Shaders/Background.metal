@@ -62,7 +62,10 @@ fragment float4 background_fragment(VertexOut in [[stage_in]],
 
     float r = length(p);
     float drift = 0.5 + 0.5 * sin(u.time * 0.18);
-    float halo = exp(-r * (4.0 - 0.5 * drift - lo * 1.2));
+    // Wider, brighter halo so the screen center never reads as a void
+    // when foreground modes leave negative space (Aurora gaps,
+    // Filament donut, etc.).
+    float halo = exp(-r * (2.6 - 0.4 * drift - lo * 1.0));
 
     float beatRadius = u.beat * 0.55;
     float ring = exp(-pow((r - beatRadius) * 12.0, 2.0)) * u.beat;
@@ -72,11 +75,11 @@ fragment float4 background_fragment(VertexOut in [[stage_in]],
     float sparkle = sparkleField * hi * 1.4;
 
     float3 col = base
-        + halo * 0.22 * palette.primary.rgb
+        + halo * 0.30 * palette.primary.rgb
         + ring * palette.accent.rgb * 0.6
         + sparkle * palette.secondary.rgb * 0.55;
 
-    col *= 1.0 - smoothstep(0.7, 1.25, r) * 0.45;
+    col *= 1.0 - smoothstep(0.78, 1.30, r) * 0.40;
 
     // Bass-band floor tint, modulated by the lowest log-bin energy.
     float bassFloor = magnitudes[0] * 4.0;

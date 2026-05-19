@@ -110,7 +110,10 @@ fragment float4 aurora_fragment(AuroraOut in [[stage_in]],
     float streakMask = smoothstep(0.45, 0.95, streak);
 
     // Soft band along ribbon depth (UV.y) — gives volumetric falloff.
-    float depthBand = exp(-pow((uv.y - 0.5) * 2.6, 2.0));
+    // 2.1 keeps edges visible enough (≈0.33 at uv.y=0/1) that four
+    // overlapping ribbons fill the center without carving an oval
+    // void, but tight enough that additive stacking doesn't saturate.
+    float depthBand = exp(-pow((uv.y - 0.5) * 2.1, 2.0));
 
     // Audio-reactive intensity envelope.
     float envelope = 1.0 + abs(in.displacement) * 1.4 + u.beat * 0.9 + u.loudness * 2.0;
@@ -125,8 +128,10 @@ fragment float4 aurora_fragment(AuroraOut in [[stage_in]],
     float hueShift = in.ribbonPhase * 0.16;
     finalColor = mix(finalColor, tip * intensity, hueShift);
 
-    // Alpha drives the additive contribution.
-    float alpha = clamp(intensity * 0.55, 0.0, 1.0);
+    // Alpha drives the additive contribution. Tuned so four ribbons
+    // with the 2.1 depth-band compose into glowing sheets without
+    // saturating to white at the brightest overlapping crests.
+    float alpha = clamp(intensity * 0.17, 0.0, 1.0);
 
     return float4(finalColor, alpha);
 }

@@ -72,19 +72,35 @@ vertex FilamentOut filament_vertex(uint vid [[vertex_id]],
     float lifeT = age / u.lifetime;
 
     float angle = hash11(seed * 0.0073) * 6.28318;
-    float radius = mix(0.04, 1.05, hash11(seed * 0.0193));
+    // Bias toward the center via radius² so uniform sampling doesn't
+    // produce ring-heavy distributions on a 2D plane.
+    float radiusRoll = hash11(seed * 0.0193);
+    float radius = mix(0.0, 1.05, radiusRoll * radiusRoll);
     float2 spawn = float2(cos(angle), sin(angle)) * radius;
 
-    float2 flow = curl2(spawn * 2.3 + float2(u.time * 0.12, -u.time * 0.08));
-    flow *= u.flowStrength;
+    // Per-particle "speed class". Cubic distribution means most
+    // particles are nearly static (filling the interior with a
+    // soft cloud) while a small tail of fast particles makes the
+    // visible swirls. Multi-scale noise prevents the entire fast
+    // population from clustering at one characteristic radius.
+    float speedClass = hash11(seed * 0.041);
+    float speedMul = speedClass * speedClass * speedClass;
+    float perParticleFlow = u.flowStrength * (0.04 + speedMul * 1.10);
+
+    // Per-particle spatial scale so curl eddies don't all line up.
+    float scale = 1.7 + hash11(seed * 0.083) * 3.4;
+    float2 flowA = curl2(spawn * scale + float2(u.time * 0.12, -u.time * 0.08));
+    float2 flowB = curl2(spawn * (scale * 2.7) + float2(u.time * 0.05, u.time * 0.09));
+    float2 flow = (flowA * 0.78 + flowB * 0.22) * perParticleFlow;
 
     // Second-order step for a slightly arched trajectory.
     float2 midPos = spawn + flow * (age * 0.5);
-    float2 flow2 = curl2(midPos * 2.3 + float2(u.time * 0.18, u.time * 0.22));
-    float2 position = spawn + flow * age + flow2 * age * 0.4;
+    float2 flow2 = curl2(midPos * scale + float2(u.time * 0.18, u.time * 0.22));
+    float2 position = spawn + flow * age + flow2 * age * 0.4 * perParticleFlow;
 
-    // Beat thrust outward.
-    float beatPush = u.beat * 0.12 * lifeT;
+    // Beat thrust outward, scaled by speedClass so the slow center
+    // population isn't shoved into the ring.
+    float beatPush = u.beat * 0.12 * lifeT * speedClass;
     position += normalize(position + 1e-3) * beatPush;
 
     // Subtle vertical sway from low band.

@@ -23,7 +23,7 @@ final class FilamentVisualizer: VisualizerMode {
 
     private let background: BackgroundPass
     private let pipeline: any MTLRenderPipelineState
-    private let particleCount: UInt32 = 80_000
+    private let particleCount: UInt32 = 120_000
 
     init(device: any MTLDevice, format: MTLPixelFormat) throws {
         self.background = try BackgroundPass(device: device, format: format)
@@ -66,9 +66,9 @@ final class FilamentVisualizer: VisualizerMode {
             beat: frame.smoothed.beat,
             loudness: frame.smoothed.loudness,
             particleCount: particleCount,
-            flowStrength: 0.45 + frame.smoothed.high * 6.0,
+            flowStrength: 0.18 + frame.smoothed.high * 3.5,
             pointSize: 2.4,
-            lifetime: 3.4
+            lifetime: 2.4
         )
         var palette = PaletteUniforms(
             primary: SIMD4(frame.palette.primary, 1),
