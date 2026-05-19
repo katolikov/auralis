@@ -36,29 +36,40 @@ final class AudioCaptureController: ObservableObject {
         guard !isRunning else { return }
 
         var permissionPrompted = false
+        var preflightDeniedCycles = 0
         var failuresAfterGrant = 0
 
         while !isRunning {
             if Task.isCancelled { return }
 
-            // Gate the SCK call on preflight. Calling SCShareableContent
-            // before permission is granted re-triggers macOS's modal
-            // permission dialog on each retry — exactly the spam we
-            // hit before. Wait passively for the toggle instead.
+            // Gate the SCK call on preflight so we don't re-trigger
+            // macOS's modal permission dialog on each retry.
             if !CGPreflightScreenCaptureAccess() {
                 if !permissionPrompted {
                     _ = CGRequestScreenCaptureAccess()
                     permissionPrompted = true
                 }
-                actionRequired = .openSettings
-                statusMessage = "Tap here · enable Auralis under Screen Recording in System Settings."
+                preflightDeniedCycles += 1
+
+                // After ~6 s of "still denied" post-prompt, assume the
+                // user has either enabled the toggle (and TCC is just
+                // caching the old verdict for our process) or hasn't
+                // done so yet. Either way, a relaunch resolves it: a
+                // fresh process re-reads TCC; if grant isn't there, it
+                // re-enters this loop and shows the openSettings hint.
+                if preflightDeniedCycles >= 3 {
+                    actionRequired = .relaunch
+                    statusMessage = "If Auralis is enabled in Screen Recording, tap to relaunch — macOS caches the verdict per process."
+                } else {
+                    actionRequired = .openSettings
+                    statusMessage = "Tap here · enable Auralis under Screen Recording in System Settings."
+                }
                 try? await Task.sleep(for: .seconds(2))
                 continue
             }
 
-            // Preflight says granted. Now it's safe to attempt the SCK
-            // call. If SCK still fails (process-cache stale), offer a
-            // one-tap relaunch — never re-spam SCShareableContent.
+            // Preflight says granted. Try the actual SCK call. If even
+            // that fails, fall back to the relaunch escape hatch.
             do {
                 try await capture.start()
                 consumeTask?.cancel()
@@ -76,7 +87,6 @@ final class AudioCaptureController: ObservableObject {
                 if failuresAfterGrant >= 2 {
                     actionRequired = .relaunch
                     statusMessage = "Permission set. Tap to relaunch Auralis and start capture."
-                    // Pause longer between SCK retries so we don't churn.
                     try? await Task.sleep(for: .seconds(5))
                 } else if let localized = (error as? any LocalizedError)?.errorDescription {
                     actionRequired = nil
