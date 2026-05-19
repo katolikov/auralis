@@ -28,82 +28,45 @@ final class AudioCaptureController: ObservableObject {
 
     private let capture = SystemAudioCapture()
     private var consumeTask: Task<Void, Never>?
+    private var escalationTask: Task<Void, Never>?
 
     private let attack: Float = 0.45
     private let release: Float = 0.10
 
+    /// Single-shot start. Either succeeds and silences the chip, or
+    /// fails and surfaces a tappable chip pointing to the right next
+    /// step. No SCShareableContent retries — repeated calls would
+    /// re-trigger macOS's TCC dialog when the system is undecided.
     func start() async {
         guard !isRunning else { return }
 
-        var permissionPrompted = false
-        var preflightDeniedCycles = 0
-        var failuresAfterGrant = 0
-
-        while !isRunning {
-            if Task.isCancelled { return }
-
-            // Gate the SCK call on preflight so we don't re-trigger
-            // macOS's modal permission dialog on each retry.
-            if !CGPreflightScreenCaptureAccess() {
-                if !permissionPrompted {
-                    _ = CGRequestScreenCaptureAccess()
-                    permissionPrompted = true
-                }
-                preflightDeniedCycles += 1
-
-                // After ~6 s of "still denied" post-prompt, assume the
-                // user has either enabled the toggle (and TCC is just
-                // caching the old verdict for our process) or hasn't
-                // done so yet. Either way, a relaunch resolves it: a
-                // fresh process re-reads TCC; if grant isn't there, it
-                // re-enters this loop and shows the openSettings hint.
-                if preflightDeniedCycles >= 3 {
-                    actionRequired = .relaunch
-                    statusMessage = "If Auralis is enabled in Screen Recording, tap to relaunch — macOS caches the verdict per process."
-                } else {
-                    actionRequired = .openSettings
-                    statusMessage = "Tap here · enable Auralis under Screen Recording in System Settings."
-                }
-                try? await Task.sleep(for: .seconds(2))
-                continue
-            }
-
-            // Preflight says granted. Try the actual SCK call. If even
-            // that fails, fall back to the relaunch escape hatch.
-            do {
-                try await capture.start()
-                consumeTask?.cancel()
-                consumeTask = Task { @MainActor [weak self, capture] in
-                    for await features in capture.featureStream {
-                        self?.ingest(features)
-                    }
-                }
-                isRunning = true
-                statusMessage = nil
-                actionRequired = nil
-                return
-            } catch {
-                failuresAfterGrant += 1
-                if failuresAfterGrant >= 2 {
-                    actionRequired = .relaunch
-                    statusMessage = "Permission set. Tap to relaunch Auralis and start capture."
-                    try? await Task.sleep(for: .seconds(5))
-                } else if let localized = (error as? any LocalizedError)?.errorDescription {
-                    actionRequired = nil
-                    statusMessage = localized
-                    try? await Task.sleep(for: .seconds(2))
-                } else {
-                    actionRequired = nil
-                    statusMessage = "Starting capture…"
-                    try? await Task.sleep(for: .seconds(2))
-                }
-            }
+        do {
+            try await capture.start()
+            attachConsumer()
+            isRunning = true
+            statusMessage = nil
+            actionRequired = nil
+            escalationTask?.cancel()
+        } catch {
+            offerRemediation(initial: true)
         }
+    }
+
+    /// User-driven retry — only attempted when explicitly invoked
+    /// (e.g. after they enable the toggle and we want to try again
+    /// without a process restart).
+    func retry() async {
+        escalationTask?.cancel()
+        statusMessage = "Starting capture…"
+        actionRequired = nil
+        await start()
     }
 
     func stop() async {
         consumeTask?.cancel()
         consumeTask = nil
+        escalationTask?.cancel()
+        escalationTask = nil
         await capture.stop()
         isRunning = false
     }
@@ -123,6 +86,50 @@ final class AudioCaptureController: ObservableObject {
             relaunchSelf()
         case .none:
             break
+        }
+    }
+
+    private func attachConsumer() {
+        consumeTask?.cancel()
+        consumeTask = Task { @MainActor [weak self, capture] in
+            for await features in capture.featureStream {
+                self?.ingest(features)
+            }
+        }
+    }
+
+    private func offerRemediation(initial: Bool) {
+        let granted = CGPreflightScreenCaptureAccess()
+
+        if initial && !granted {
+            // Idempotent on subsequent calls — registers Auralis in the
+            // TCC database if it isn't yet, otherwise no-op.
+            _ = CGRequestScreenCaptureAccess()
+        }
+
+        if granted {
+            actionRequired = .relaunch
+            statusMessage = "Permission set. Tap to relaunch Auralis and start capture."
+        } else {
+            actionRequired = .openSettings
+            statusMessage = "Tap here · enable Auralis under Screen Recording in System Settings."
+        }
+
+        // After ~6 seconds, escalate the openSettings chip into a
+        // relaunch chip. macOS caches the TCC verdict per process —
+        // once this process has been told "denied", flipping the
+        // toggle in Settings does not update preflight for us. The
+        // relaunch chip is the reliable way out of that state.
+        escalationTask?.cancel()
+        if actionRequired == .openSettings {
+            escalationTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(6))
+                guard !Task.isCancelled, let self else { return }
+                guard self.actionRequired == .openSettings else { return }
+                self.actionRequired = .relaunch
+                self.statusMessage =
+                    "If Auralis is enabled in Screen Recording, tap to relaunch — macOS caches the verdict per process."
+            }
         }
     }
 
